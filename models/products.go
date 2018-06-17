@@ -8,9 +8,9 @@ import (
 	"github.com/jinzhu/gorm"
 	"github.com/asdfsx/zhihu-golang-web/pkg/logging"
 	"time"
-	"github.com/asdfsx/zhihu-golang-web/pkg/msg"
-	"github.com/asdfsx/zhihu-golang-web/pkg/util"
-	"reflect"
+	"github.com/qq976739120/zhihu-golang-web/pkg/msg"
+	"github.com/qq976739120/zhihu-golang-web/pkg/util"
+
 )
 
 type Product struct {
@@ -23,9 +23,11 @@ type Product struct {
 	Des        string   `json:"des"` //列名是 des
 	CategoryId int      `json:"category_id"`
 	Category   Category `json:"category"`
+	ImgUrl  string `json:"img_url"`
 }
 
 func GetProducts(pageNum int, pageSize int, maps interface{}) (products []Product) {
+
 	db.Preload("Category").Where(maps).Offset(pageNum).Limit(pageSize).Find(&products)
 	return
 }
@@ -89,12 +91,10 @@ func GetProduct(id int) interface{} {
 		var category_json map[string]interface{}
 		res = make(map[string]interface{})
 		res_bytes, _ := redis.StringMap(conn.Do("HGETALL", key_name))
-		for k,v := range res_bytes{
+		for k, v := range res_bytes {
 			res[k] = v
 		}
-		fmt.Println(res["category"],reflect.TypeOf(res["category"]))
-		err :=json.Unmarshal([]byte(res_bytes["category"]),&category_json)
-		fmt.Println(err)
+		json.Unmarshal([]byte(res_bytes["category"]), &category_json)
 		res["category"] = category_json
 		return res
 	} else {
@@ -109,7 +109,7 @@ func GetProduct(id int) interface{} {
 			}
 			return valu_map
 		}
-		category_json,_ := json.Marshal(util.ToMap(product.Category))
+		category_json, _ := json.Marshal(util.ToMap(product.Category))
 		m := map[string]interface{}{
 			"id":       product.ID,
 			"name":     product.Name,
@@ -119,33 +119,21 @@ func GetProduct(id int) interface{} {
 			"des":      product.Des,
 			"category": category_json,
 		}
-		//value, _ := json.Marshal(m)
-		//
-		//if _, e := conn.Do("SET", key_name, value, "EX", 10000); e != nil {
-		//	logging.Error("存缓存出错 id---", id, time.Now().Format(msg.TIME_FORMAT))
-		//}
 		_, er := conn.Do("HMSET", redis.Args{}.Add(key_name).AddFlat(m)...)
 		fmt.Println(er)
-
 		return m
 	}
 }
 func DeleteProduct(id int) bool {
 	key_name := util.Merge_name_helper("shop_product", id)
 	conn := cache.RedisPool.Get()
-	exit := IsProductCacheExit(id)
 	defer conn.Close()
+	db.Where("id = ?", id).Delete(Product{})
+	conn.Do("DEL", key_name)
 
-	if exit {
-		conn.Do("DEL", key_name)
-		db.Where("id = ?", id).Delete(Product{})
-	} else {
-		db.Where("id = ?", id).Delete(Product{})
-	}
 	return true
 }
 
-//
 func BuyProduct(id int) bool {
 	conn := cache.RedisPool.Get()
 	defer conn.Close()
@@ -153,7 +141,6 @@ func BuyProduct(id int) bool {
 	key_name := util.Merge_name_helper("shop_product", id)
 	if exit {
 		conn.Do("hincrby", key_name, "left", -1)
-
 	} else {
 		exit = IsProductDBExit(id)
 		if exit {
@@ -163,4 +150,22 @@ func BuyProduct(id int) bool {
 		}
 	}
 	return true
+}
+func SecondKill(user_id int)bool {
+	//总量
+	all_num  := 100
+	conn := cache.RedisPool.Get()
+	defer conn.Close()
+	len_reply,err := redis.Int(conn.Do("LLEN","second_kill"))
+
+	if len_reply >= all_num{
+		return false
+	}else{
+		_, err = conn.Do("LPUSH", "second_kill", user_id)
+		return true
+	}
+	if err != nil{
+		logging.Error("秒杀出错", err)
+	}
+	return false
 }
